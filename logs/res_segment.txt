@@ -1,0 +1,15 @@
+--- Cluster Means ---
+         PenSolar  CPDSolar    BSR  GrowthSolar  GrowthBattery  LGA_count
+Cluster                                                                  
+0           7.997    44.733  0.061   278811.477      30366.285         22
+1           8.716    46.156  0.022    41922.496       2392.200        281
+2           9.501    51.927  0.085    28658.384       5405.648         68
+3         104.764   559.054  0.041    18597.600       2614.536         10
+
+--- Cluster Rankings (1 = lowest) ---
+         PenSolar_rank  CPDSolar_rank  BSR_rank  GrowthSolar_rank  GrowthBattery_rank
+Cluster                                                                              
+0                    1              1         3                 4                   4
+1                    2              2         1                 3                   1
+2                    3              3         4                 2                   3
+3                    4              4         2                 1                   2

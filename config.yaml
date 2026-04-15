@@ -4,6 +4,7 @@ paths:
   raw_abs: './data/abs'
   raw_aemo: './data/aemo'
   Lga2Po: './data/lga/Lga2Po.csv'
+  rural: './data/lga/MMMPOA.csv'
   sql_db: './data/sql_db/energy.db'
 
 
