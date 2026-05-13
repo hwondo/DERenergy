@@ -1,215 +1,185 @@
-import sqlite3 as sql
-import pandas as pd
+#############################################################################
+### Clean Raw Files and Load into SQLite and PostgreSQl/PostGIS Databases ###
+#############################################################################
+
+# Raw files directory specified in config.yaml file
+# SQL connections specified in config.yaml file
+# Run in script in its contained directory. 
+
 import yaml
 import glob
+import geopandas as gpd
+import pandas as pd
+from sqlalchemy import create_engine, text
 
-def Get_Paths():
-    # --- Import data ---# 
-    
-    # Get path from config file
-    with open("./config.yaml","r") as file:
-        config = yaml.safe_load(file)
-        
-    # Obtain paths from Yaml
-    aemo_data_path = config['paths']['raw_aemo']
-    abs_data_path =  config['paths']['raw_abs']
-    Lga2Po_path = config['paths']['Lga2Po']
-    rural_path = config['paths']['rural']
-    db_path = config['paths']['sql_db']
-    
-    return aemo_data_path, abs_data_path, Lga2Po_path, rural_path, db_path
+def get_config():
+    with open("./config.yaml", "r") as f:
+        return yaml.safe_load(f)
+
+def get_engine(config):
+    c = config['sql_config']
+    return create_engine(
+        f"postgresql://{c['usr']}:{c['password']}@{c['server']}:{c['port']}/{c['dbname']}"
+    )
+
+# Force postcode as string (prevents errors from 0012 type)
+FORCE_DTYPE = {
+    "postcode": str, "post_code":str, "POA 2021 Code":str,
+    "LGA_2021": str
+    } 
+
+# --- Functions to Process Raw Data --- #
 
 
-def New_Database(db_path: str):
-    # --- Create SQL database --- #
+# AEMO Data
+def der_transform(aemo_data_path: str) -> pd.DataFrame:
+    ''' Clean AEMO DER data'''
     
-    conn = sql.connect(db_path)
-    conn.close()
-    
-    return None
-
-def Der_Transform(aemo_data_path: str):
-    # --- Clean DER data for import into database --- #
-    
-    aemo_files = glob.glob(aemo_data_path+"/*.csv")
-    
-    # Merge DER csv into single dataframe
+    # Get data from folder
+    aemo_files = glob.glob(aemo_data_path + "/*.csv")
     df_list = []
 
-    for files in aemo_files:
-        name = files[len(aemo_data_path)+1:-4]
-        df = pd.read_csv(files)
-        
-        # Standardise column names
-        df.columns = [col.lower()
-                            .replace("sum of ", "")
-                            .replace("num_", "")
-                            .replace("kvah","")
-                            .replace("kva","")
-                            .replace("post_code","postcode")
-                            .strip()
-                            .title()
-                            .replace("_","")
-                        for col in list(df.columns)]
-        
+    #  Merge multiple years of DER csv into single dataframe
+    for filepath in aemo_files:
+        name = filepath[len(aemo_data_path)+1:-4]
+        df = pd.read_csv(filepath,dtype=FORCE_DTYPE)
+
+        df.columns = [
+            col.lower()
+               .replace("sum of ", "")
+               .replace("num_", "")
+               .replace("kvah", "")
+               .replace("kva", "")
+               .replace("post_code", "postcode")
+               .strip()
+               .strip("_")
+            for col in df.columns
+        ]
+
         # Clean Postcode column (rows containing aggregates appear with "<" or ">" no. of postcodes)
-        df['Postcode'] = pd.to_numeric(df['Postcode'],errors='coerce')
+        df = df[~df['postcode'].str.contains('<|>', na=False)]
         df.dropna(inplace=True)
-        df['Postcode'] = df['Postcode'].astype(int)
         
-        df['Year'] = int(name[:4]) # pass year from file name into column
-        df['Month'] = str(name[5:])  # pass month from file name into column
+        
+        df['year'] = int(name[:4]) # pass year from file name into column
+        df['month'] = str(name[5:])  # pass month from file name into column
         df_list.append(df)
+        
 
+    derr_df = pd.concat(df_list, ignore_index=True)
 
-    derr_raw_df = pd.concat(df_list, ignore_index=True)    
+    return derr_df
 
-    # Select relevant columns
-    select =['State', 'Postcode', 'NmiBusRes', 'DerConnections',
-        'InstalledDerCapacity', 'SolarConnections', 'SolarCapacity',
-        'BatteryConnections', 'BatteryCapacity', 'BatteryStorage',
-        'OtherConnections', 'InstalledOtherderCapacity', 'Year']
+# ABS Census Data
+def abs_transform(abs_data_path: str) -> pd.DataFrame:
+    ''' Clean ABS census data  '''
     
-    derr_raw_df = derr_raw_df[select]
-    
-    return derr_raw_df
-
-
-def ABS_Transform(abs_data_path: str):
-    # --- Clean ABS data for import into database --- #
-
-    select = ['Data Item', 'MEASURE', 'LGA_2021','Region','TIME_PERIOD','OBS_VALUE','Unit of Measure']
-
-    # Import population df from ABS
-    population_raw_df = pd.read_csv(abs_data_path+"/ABS_Population.csv")
+    # Select relevant columns 
+    select = ['Data Item', 'MEASURE', 'LGA_2021', 'Region',
+              'TIME_PERIOD', 'OBS_VALUE', 'Unit of Measure']
 
     # Standardise Columns
-    population_raw_df = population_raw_df[select]
-    population_raw_df.columns = [col.lower()
-                            .replace("of measure", "")
-                            .replace("2021", "")
-                            .title()
-                            .replace(" ", "")
-                            .replace("_","")
-                            for col in list(population_raw_df.columns)]
-
-    # Import business numbers from ABS
-    economic_raw_df = pd.read_csv(abs_data_path+"/ABS_Economic.csv")
-
-    # Clean Columns
-    economic_raw_df = economic_raw_df[select]
-    economic_raw_df.columns = [cols.lower()
-                                .replace("of measure", "")
-                                .replace("2021","")
-                                .title()
-                                .replace(" ","")
-                                .replace("_","")
-                            for cols in economic_raw_df.columns]
-
-
-
-    abs_raw = pd.concat([population_raw_df, economic_raw_df], ignore_index=True)
+    def clean_cols(df):
+        df.columns = [
+            col.lower()
+               .replace("of measure", "")
+               .replace("_2021", "")
+               .strip()
+               .replace(" ", "_")
+            for col in df.columns
+        ]
+        return df
     
-    return abs_raw
-
-
-def ABS_Dwelling_Transform(abs_data_path: str):
-    select = ['DWTSTRD', 'REGION', 'Region', 'TIME_PERIOD', 'OBS_VALUE']
+    # Read data
+    pop_df = pd.read_csv(abs_data_path + "/ABS_Population.csv",dtype=FORCE_DTYPE)[select]
+    econ_df = pd.read_csv(abs_data_path + "/ABS_Economic.csv",dtype=FORCE_DTYPE)[select]
     
+    # Clean cols
+    pop_df  = clean_cols(pop_df)
+    econ_df = clean_cols(econ_df)
+
+    return pd.concat([pop_df, econ_df], ignore_index=True)
+
+# ABS Dwelling Data
+def abs_dwelling_transform(abs_data_path: str) -> pd.DataFrame:
+    ''' Clean ABS Dwelling data  '''
+
     # Import raw dwelling data
-    dwelling_raw_df = pd.read_csv(abs_data_path+"/ABS_Dwelling.csv")
+    df = pd.read_csv(abs_data_path + "/ABS_Dwelling.csv",dtype=FORCE_DTYPE)
+    # Select relevant columns
+    df = df[['DWTSTRD', 'REGION', 'Region', 'TIME_PERIOD', 'OBS_VALUE']]
+    # rename
+    df.columns = ['Type', 'LGA_2021', 'Region', 'TIME_PERIOD', 'OBS_VALUE']
     
-    # Clean columns
-    dwelling_raw_df = dwelling_raw_df[select]
-    dwelling_raw_df.columns = ['Type','LGA_2021','Region','TIME_PERIOD', 'OBS_VALUE']
-    
-    return dwelling_raw_df
-    
-
-def Lga2postcode(Lga2Po_path: str):
-    # --- Clean LGA to Postcode Data for import into database --- #
-
-    # Import LGA to Postcode data 
-    lga2po_df = pd.read_csv(Lga2Po_path)
-
-    # Clean postcode and LGA columns
-    lga2po_df.columns = ["Lga", "Region", "Postcode"]
-    lga2po_df['Lga'] = pd.to_numeric(lga2po_df['Lga'], errors='coerce').astype('Int64')
-    lga2po_df['Postcode'] = pd.to_numeric(lga2po_df['Postcode'], errors='coerce').astype('Int64')
-    
-    return lga2po_df
+    return df
 
 
-def RuralClass(RuralClass_path: str):
-    # --- Clean rural classification data --- #
+# Monash Model Rural Classification Data
+def rural_transform(rural_path: str) -> pd.DataFrame:
     
     # Import Rural Classification data 
-    rural_class_df = pd.read_csv(RuralClass_path)
+    df = pd.read_csv(rural_path,dtype=FORCE_DTYPE)
     
     # Clean columns
-    rural_class_df = rural_class_df.drop(labels='Unnamed: 0',axis=1)
-    rural_class_df.columns = ['Postcode', 'Area(km2)', 'MMM_Class','MMM_Area']  
-    
-    return rural_class_df
+    df = df.drop(labels='Unnamed: 0',axis=1)
+    df.columns = ['Postcode', 'Area_km2', 'MMM_Class','MMM_Area']  
+    return df
 
-def Load_Sqldb(db_path: str,
-               derr_raw_df: pd.DataFrame,
-               abs_raw_df: pd.DataFrame,
-               dwelling_raw_df: pd.DataFrame,
-               lga2po_df: pd.DataFrame,
-               rural_class_df: pd.DataFrame):
-    # --- Load into SQL Database --- #
+# --- Functions to Load Tables --- #
 
-    # Connect to SQL database
-    conn = sql.connect(db_path)
-    cursor = conn.cursor()
+def load_tables(df_dict: dict, engine):
+    ''' Load tables from df_dict = {name: df} into SQL server via engine'''
+    
+    for name, df in df_dict.items():
+        df.columns = df.columns.str.lower()
+        df.to_sql(name=name, con=engine, schema="raw",
+                  if_exists="replace", index=False)
+        print(f"Loaded: raw.{name}")
 
-    # Drop existing tables
-    cursor.execute("DROP TABLE IF EXISTS Raw_Derr")
-    cursor.execute("DROP TABLE IF EXISTS Raw_ABS")
-    cursor.execute("DROP TABLE IF EXISTS Raw_Dwelling")
-    cursor.execute("DROP TABLE IF EXISTS Lga2Postcode")
-    cursor.execute("DROP TABLE IF EXISTS rural_class")
 
-    # Save data in SQL database
-    derr_raw_df.to_sql("Raw_Derr",conn, if_exists='replace', index=False)
-    abs_raw_df.to_sql("Raw_ABS", conn, if_exists='replace', index=False)
-    dwelling_raw_df.to_sql("Raw_Dwelling", conn, if_exists='replace', index=False)
-    lga2po_df.to_sql("Lga2Postcode",conn,if_exists='replace', index=False)
-    rural_class_df.to_sql("rural_class",conn,if_exists='replace', index=False)
-    
-    
-    conn.close()
-    
-    return None
+def load_spatial(filepath: str, name: str, engine):
+    ''' Load spatial data from filepath into SQL server via engine'''
+
+    gdf = gpd.read_file(filepath)
+    crs = gdf.crs
+    gdf.columns = gdf.columns.str.lower()
+
+    gdf.to_postgis(name=name, con=engine, schema="raw",
+                   if_exists="replace", index=False)
+
+    with engine.connect() as conn:
+        conn.execute(text(
+            f'CREATE INDEX IF NOT EXISTS idx_{name}_geometry '
+            f'ON raw."{name}" USING GIST(geometry)'
+        ))
+        conn.commit()
+
+    print(f"Loaded spatial: raw.{name} (CRS: {crs})")
 
 
 def main():
     
-    # Get paths from Config file
-    aemo_data_path, abs_data_path, Lga2Po_path, rural_path, db_path = Get_Paths()
-    
-    # Transform data
-    derr_raw_df = Der_Transform(aemo_data_path)
-    abs_raw_df = ABS_Transform(abs_data_path)
-    dwelling_raw_df = ABS_Dwelling_Transform(abs_data_path)
-    lga2po_df =  Lga2postcode(Lga2Po_path)
-    rural_class_df = RuralClass(rural_path)
-    
-    # Create SQLite databases
-    New_Database(db_path)
+    # Get paths and connect to PostgreSQL server 
+    config = get_config()
+    paths  = config['paths']
+    engine = get_engine(config)
 
-    # Load into SQLite database
-    Load_Sqldb(
-        db_path,
-        derr_raw_df,
-        abs_raw_df,
-        dwelling_raw_df,
-        lga2po_df,
-        rural_class_df
-        )
+    # Create data dictionary 
+    df_dict = {
+        "raw_der":     der_transform(paths['raw_aemo']),
+        "raw_abs":      abs_transform(paths['raw_abs']),
+        "raw_dwelling": abs_dwelling_transform(paths['raw_abs']),
+        "rural_class":  rural_transform(paths['rural']),
+    } # < ----- Name tables here 
+
+    # Load data into Server
+    load_tables(df_dict, engine)
     
-    print("Completed ETL")
+    # Load spatial data into server
+    load_spatial(paths['lga_shape'], 'lga_boundary', engine)
+    load_spatial(paths['poa_shape'], 'poa_boundary', engine)
+
+    print("ETL complete.")
 
 
 if __name__ == "__main__":

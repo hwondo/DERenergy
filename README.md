@@ -11,8 +11,10 @@ characteristics, and adoption patterns.
 **Objectives:**
 
 - Derive key metrics for solar and batter adoption. 
+- Identify spatial hotspots and cold spots of key metrics. 
 - Cluster LGAs into adoption profiles to support policy-making.
-- Identify key drivers of solar and batter adoption. 
+- Identify demographic variables with significant solar and battery adoption differences. 
+- Identify key drivers of solar growth and its interaction with spatial location.
 - Deliver a Power BI dashboard that provides intuitive, data-driven insights 
   for decision-makers.
 
@@ -33,12 +35,17 @@ characteristics, and adoption patterns.
    could not be completed due to a fundamental overlap violation — a substantial 
    proportion of LGAs could not be matched after controlling for observed 
    covariates.
+4. Solar growth (yearly increase) drivers are 
+   - population density, 
+   - total population and
+   - primary industry count.
+   Effect on own LGA and neighbouring LGA quantified using a spatial Durbin model. 
 
 ---
 
 ## Detailed Objectives
 
-1. Aggregate and clean DER and socioeconomic data at the LGA level.
+1. Aggregate and clean DER and socioeconomic daa at the LGA level.
 2. Load cleaned data into an SQL database for reproducible and future analysis.
 3. Generate metrics that provide a clear summary of DER adoption across Australia.
 4. Cluster LGAs based on metrics to profile adoption behaviour.
@@ -53,10 +60,10 @@ characteristics, and adoption patterns.
 
 1. Save raw DER Registry (DERR) data from AEMO in `data/aemo` and raw ABS data 
    in `data/abs`.
-2. Run the ETL script at `code/ETL.py` to clean and load data into the SQLite 
-   database at `data/sql_db/energy.db`.
-3. Run or view notebooks in order. The `market_segmentation` notebook is 
-   required to generate LGA clusters for the dashboard. The 
+2. Run the ETL script at `script/0_ETL.py` to clean and load data into postgreSQL server specified in `config.yaml`. 
+3. Run or view notebooks in order.
+   - The `2_metrics.ipynb` notebook should be run first to generate adoption metrics.  
+   - The `market_segmentation` notebook is required to generate LGA clusters for the dashboard. The 
    `observational_causal_inference` notebook applies propensity score matching 
    to analyse the effect of rurality on DER adoption patterns.
 4. Update the Power BI dashboard at `dashboard/EnergyDashboard.pbix`.
@@ -69,8 +76,8 @@ characteristics, and adoption patterns.
 |---|---|
 | ABS (Australian Bureau of Statistics) | Population, median age, income, education levels, business sectors and business size |
 | DER Registry (AEMO) | Installed capacity, DER connections, and breakdown by DER type (solar, battery, other) |
-| Geographical mapping | Postcode-to-LGA mapping based on the 2021 boundary map |
-| Modified Monash Model | Classification of locations as metropolitan, rural, remote, or very remote |
+| ABS ASGS | Shapefiles for LGA and POA boundaries |
+| Modified Monash Model | Classification of locations as metropolitan, rural, remote, or very remote LGAs |
 
 ---
 
@@ -89,16 +96,6 @@ characteristics, and adoption patterns.
 - Selected relevant columns from raw ABS population and economic data.
 - Standardised column names.
 - Combined into a single DataFrame.
-
-### Star Schema in SQLite Database
-
-| Query | Description |
-|---|---|
-| `Q_abs_data_items` | Dimension table of ABS measure codes and measure items |
-| `Q_Region` | Dimension table of postcode-to-LGA correspondence |
-| `Q_Main_Derr` | Fact table for DERR data, aggregated by LGA and year |
-| `Q_Population_Agg` | Population data table in long form |
-| `Q_Business_Agg` | Economic data table in long form |
 
 ### ETL for Analysis and Power BI Dashboard
 
@@ -120,6 +117,23 @@ characteristics, and adoption patterns.
 
 ## Database Schema
 
+### `Fact_Der
+| Column | Description |
+|---|---|
+| `lga` | Postcode |
+| `year` | State the postcode is in |
+| `type` | LGA code of postcode |
+| `total_capacity` | Total capacity in LGA |
+| `battery_capacity` | Battery capacity in LGA  |
+| `solar_capacity` | Solar capacity in LGA  |
+| `other_capacity` | Other DER capacity in LGA |
+| `total_connections` | Total number of DER connections |
+| `battery_connections` | Number of battery connections |
+| `solar_connections` |  Number of solar connections|
+| `other_connections` | Number of other DER connections |
+
+`
+
 ### `Dim_DataItem`
 
 | Column | Description |
@@ -136,7 +150,7 @@ characteristics, and adoption patterns.
 | `Lga` | LGA code of postcode |
 | `Region` | Name of postcode region |
 
-### `Fact_Population`
+### `Dim_Population`
 
 | Column | Description |
 |---|---|
@@ -152,7 +166,7 @@ characteristics, and adoption patterns.
 | `GraduateDiploma` | Share of population with a graduate diploma |
 | `Postgraduate` | Share of population with a postgraduate degree |
 
-### `Fact_Economic`
+### `Dim_Economic`
 
 | Column | Description |
 |---|---|
@@ -213,7 +227,7 @@ divide.
 
 ---
 
-## KPIs
+## Adoption Metrics
 
 | Metric | Definition | Policy Relevance |
 |---|---|---|
@@ -259,3 +273,35 @@ assess predictive power from these variables.
 | Cluster 3 | Highest penetration and capacity, near-zero growth | At ceiling — investment should shift from connection capacity to grid stability and export management |
 | Cluster 2 | Moderate solar base, highest BSR | Battery infrastructure (inverters, grid-scale BESS) is the priority |
 | Cluster 1 | Moderate solar adoption, no storage uptake, no battery growth | Low BSR suggests a feed-in tariff or price barrier is suppressing storage conversion |
+
+## Spatial Association of Metrics
+
+**Methodology**
+Adoption was analysed spatially at the state and national levels by applying statistical tests to the adoption metrics created.
+- Spatial relationships between LGAs were encoded in a normalised spatial weights matrix, generated using Queen contiguity with nearest neighbours (n=2) applied as fallback for islands. 
+- Hot and cold spots for each of the adoption metrics were detected using the local Getis-Ord G* method.
+- Clustering and dispersion of the hot and cold spots was quantified using the Local Moran I test statistic.
+- Results displayed using Folium Maps stored in `outputs/` 
+
+
+## Drivers of Residential Solar Adoption Growth
+
+**Methodology**
+
+A spatial model is created using the following methodology: 
+1. Feature selection using lasso fit.
+2. Crate a non-spatial baseline model using OLS on selected features.
+3. Lagrange multiplier tests indicated significant spatial autocorrelation in error. Suggests fitting a SEM model.
+4. Fit a SARAR. Moran's I on residuals showed spatial autocorrelation. We fit a Durbin model instead.
+5 Durbin model accounts for spatial dependence - Moran's I insignificant.  
+
+**Results**
+
+Durbin Model Results:
+- Three influential variables identified.
+- Spatial pseudo R-squared: 0.82.
+- Residuals show no statistically significant spatial autocorrelation (global Moran’s I statistic of -0.0521, p-value 0.0900).
+- Identified drivers to solar adoption quantifying effect on own LGA and neighbouring LGA. Three significant drivers are 
+   - population density 
+   - total population
+   - primary industry count

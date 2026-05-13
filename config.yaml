@@ -1,11 +1,16 @@
 # --- Directories --- #
 
 paths:
-  raw_abs: './data/abs'
-  raw_aemo: './data/aemo'
-  Lga2Po: './data/lga/Lga2Po.csv'
-  rural: './data/lga/MMMPOA.csv'
-  sql_db: './data/sql_db/energy.db'
+  raw_abs: './data/abs'                                          # ABS Data Folder - https://dataexplorer.abs.gov.au/
+  raw_aemo: './data/aemo'                                        # AEMO DER Data Folder - https://www.aemo.com.au/energy-systems/electricity/der-register/data-der/data-downloads
+  poa_shape: './data/spatial/POA_2021_AUST_GDA2020_SHP.zip'         # Postcode Shapefile - https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/digital-boundary-files
+  lga_shape: './data/spatial/LGA_2021_SHP.zip'                    # LGA Shape file - https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/digital-boundary-files
+  rural: './data/spatial/MMMPOA.csv'                                 # Rural Classification (Monash Model Output) - https://www.health.gov.au/topics/rural-health-workforce/classifications/mmm#about-the-modified-monash-model
 
-
-
+# --- SQL server configurations --- #
+sql_config:
+  usr: "admin"                           # Username
+  password:                     # Password
+  server: "192.168.1.100"     # Server path
+  port: "5432"
+  dbname: "postgres"
